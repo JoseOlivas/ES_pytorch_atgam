@@ -1,12 +1,10 @@
-# Taken from https://github.com/ikostrikov/pytorch-a3c
-from __future__ import absolute_import, division, print_function
-
-import numpy as np
-
 import gym
+import numpy as np
+from gym import spaces
+from gym.core import ObservationWrapper
 from gym.spaces.box import Box
-from universe import vectorized
-from universe.wrappers import Unvectorize, Vectorize
+#from universe import vectorized
+#from universe.wrappers import Unvectorize, Vectorize
 
 import cv2
 
@@ -38,37 +36,42 @@ def _process_frame42(frame):
     frame = np.reshape(frame, [1, 42, 42])
     return frame
 
+def _process_frame42(frame):
+    # Resize the frame to 42x42
+    frame = cv2.resize(frame, (42, 42), interpolation=cv2.INTER_AREA)
+    # Normalize pixel values to [0, 1]
+    frame = frame / 255.0
+    # Add a channel dimension if needed
+    if len(frame.shape) == 2:  # If the frame is grayscale
+        frame = frame[:, :, np.newaxis]
+    return frame
 
-class AtariRescale42x42(vectorized.ObservationWrapper):
-
-    def __init__(self, env=None):
+class AtariRescale42x42(ObservationWrapper):
+    def __init__(self, env):
         super(AtariRescale42x42, self).__init__(env)
-        self.observation_space = Box(0.0, 1.0, [1, 42, 42])
+        self.observation_space = Box(0.0, 1.0, (42, 42, 1), dtype=np.float32)
 
-    def _observation(self, observation_n):
-        return [_process_frame42(observation) for observation in observation_n]
+    def observation(self, observation):
+        return _process_frame42(observation)
 
 
-class NormalizedEnv(vectorized.ObservationWrapper):
-
-    def __init__(self, env=None):
+class NormalizedEnv(ObservationWrapper):
+    def __init__(self, env):
         super(NormalizedEnv, self).__init__(env)
         self.state_mean = 0
         self.state_std = 0
         self.alpha = 0.9999
         self.max_episode_length = 0
 
-    def _observation(self, observation_n):
-        for observation in observation_n:
-            self.max_episode_length += 1
-            self.state_mean = self.state_mean * self.alpha + \
-                observation.mean() * (1 - self.alpha)
-            self.state_std = self.state_std * self.alpha + \
-                observation.std() * (1 - self.alpha)
+    def observation(self, observation):
+        # Update statistics
+        self.max_episode_length += 1
+        self.state_mean = self.state_mean * self.alpha + observation.mean() * (1 - self.alpha)
+        self.state_std = self.state_std * self.alpha + observation.std() * (1 - self.alpha)
 
-        denom = (1 - pow(self.alpha, self.max_episode_length))
+        denom = (1 - np.power(self.alpha, self.max_episode_length))
         unbiased_mean = self.state_mean / denom
         unbiased_std = self.state_std / denom
 
-        return [(observation - unbiased_mean) / (unbiased_std + 1e-8)
-                for observation in observation_n]
+        # Normalize the observation
+        return (observation - unbiased_mean) / (unbiased_std + 1e-8)

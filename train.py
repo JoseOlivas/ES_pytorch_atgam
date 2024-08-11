@@ -5,7 +5,8 @@ import math
 import numpy as np
 
 import torch
-import torch.legacy.optim as legacyOptim
+import torch.optim as optim
+
 
 import torch.nn.functional as F
 import torch.multiprocessing as mp
@@ -16,6 +17,9 @@ from model import ES
 
 import matplotlib.pyplot as plt
 
+import warnings
+
+warnings.filterwarnings("ignore", category=DeprecationWarning, message=".*np.bool8.*")
 
 def do_rollouts(args, models, random_seeds, return_queue, env, are_negative):
     """
@@ -30,23 +34,26 @@ def do_rollouts(args, models, random_seeds, return_queue, env, are_negative):
             cx = Variable(torch.zeros(1, 256))
             hx = Variable(torch.zeros(1, 256))
         state = env.reset()
+        if isinstance(state, tuple):  # Check if state is a tuple
+            state, _ = state  # Unpack if it's a tuple
         state = torch.from_numpy(state)
         this_model_return = 0
         this_model_num_frames = 0
         # Rollout
         for step in range(args.max_episode_length):
-            if args.small_net:
-                state = state.float()
-                state = state.view(1, env.observation_space.shape[0])
-                logit = model(Variable(state, volatile=True))
-            else:
-                logit, (hx, cx) = model(
-                    (Variable(state.unsqueeze(0), volatile=True),
-                     (hx, cx)))
+            with torch.no_grad():
+                if args.small_net:
+                    state = state.float()
+                    state = state.view(1, env.observation_space.shape[0])
+                    logit = model(state)#, volatile=True))
+                else:
+                    logit, (hx, cx) = model(
+                        (Variable(state.unsqueeze(0), volatile=True),
+                        (hx, cx)))
 
-            prob = F.softmax(logit)
+            prob = F.softmax(logit, dim = -1)
             action = prob.max(1)[1].data.numpy()
-            state, reward, done, _ = env.step(action[0])
+            state, reward, done, _ , _= env.step(action[0])
             this_model_return += reward
             this_model_num_frames += 1
             if done:
@@ -223,7 +230,7 @@ def render_env(args, model, env):
                     (Variable(state.unsqueeze(0), volatile=True),
                      (hx, cx)))
 
-            prob = F.softmax(logit)
+            prob = F.softmax(logit, dim=-1)
             action = prob.max(1)[1].data.numpy()
             state, reward, done, _ = env.step(action[0, 0])
             env.render()
@@ -267,6 +274,15 @@ def train_loop(args, synced_model, env, chkpt_dir):
         # Start with negative true because pop() makes us go backwards
         is_negative = True
         # Add all peturbed models to the queue
+        #state = env.reset()
+        #if isinstance(state, tuple):  # Check if state is a tuple
+        #    state, _ = state  # Unpack if it's a tuple
+        #state = torch.from_numpy(state)
+        #esto1 = env.step(env.action_space.sample())
+        #perturbed_model = all_models.pop()
+        #logit = perturbed_model(state)
+        #prob = F.softmax(logit,dim=-1)
+
         while all_models:
             perturbed_model = all_models.pop()
             seed = all_seeds.pop()
